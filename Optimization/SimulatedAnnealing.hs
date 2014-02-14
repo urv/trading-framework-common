@@ -4,6 +4,8 @@ module Optimization.SimulatedAnnealing (
     aSimulatedAnnealing
   , MetricSpace (..)
   , SmA (..)
+  , config
+  , rGen, kmax, emax
   , module Optimization.FrameWork
 ) where
 
@@ -38,12 +40,15 @@ instance MetricSpace a => MetricSpace (SampleAt a b) where
 instance MetricSpace Double where
     dist x1 x2 = abs $ x2 - x1
 
-{-# SPECIALIZE aSimulatedAnnealing :: (RandomGen g, SmA a) => g -> Maybe Double -> Double -> [a] -> OptimizationStrategyM IO a Double #-}
-aSimulatedAnnealing :: (RandomGen g, SmA a, MetricSpace r, Ord r) => g -> Maybe r -> Double -> [a] -> OptimizationStrategyM IO a r
-aSimulatedAnnealing g emax kmax as = OptimizationStrategyM opt
+aSimulatedAnnealing :: (SmA a, MetricSpace r, Ord r) => [a] -> OptimizationStrategyM IO a r
+aSimulatedAnnealing = aSimulatedAnnealingWith config
+
+{-# SPECIALIZE aSimulatedAnnealingWith :: (RandomGen g, SmA a) => Config g Double -> [a] -> OptimizationStrategyM IO a Double #-}
+aSimulatedAnnealingWith :: (RandomGen g, SmA a, MetricSpace r, Ord r) => Config g r -> [a] -> OptimizationStrategyM IO a r
+aSimulatedAnnealingWith conf as = OptimizationStrategyM opt
     where
         opt c = do
-          s  <- newIORef g
+          s  <- rGen conf >>= newIORef
           t  <- newIORef return
           t' <- newIORef return
 
@@ -73,9 +78,9 @@ aSimulatedAnnealing g emax kmax as = OptimizationStrategyM opt
                  if | null s    -> prevState >> nextState c
                     | otherwise -> return s
             
-              run !k !e !m | k > kmax                   = return $ Just m
-                           | False `maybe` (e >) $ emax = return $ Just m
-                           | otherwise                  = do
+              run !k !e !m | k > kmax conf                   = return $ Just m
+                           | False `maybe` (e >) $ emax conf = return $ Just m
+                           | otherwise                       = do
                                 g' <- readIORef s
                                 let (r, g'') = randomR (0, 1) g'
                                 writeIORef s g''
@@ -100,7 +105,7 @@ aSimulatedAnnealing g emax kmax as = OptimizationStrategyM opt
            writeIORef s g' >> return (y', y)
             
         -- | Temperature
-        temperatureAt x = 1 - x / kmax
+        temperatureAt x = 1 - x / kmax conf
         -- | Acceptance probability
         acceptanceProb e1 e2 t = exp $ - dist e1 e2 / (boltzmann * t)
         -- | Global params
@@ -112,3 +117,8 @@ aSimulatedAnnealing g emax kmax as = OptimizationStrategyM opt
            x  <- a
            xs <- unsafeInterleaveIO $ many' as
            return $ x:xs
+
+data Config g r = C { rGen :: IO g, emax :: Maybe r, kmax :: Double }
+
+-- Default configuration for SimulatedAnnealing
+config = C getStdGen Nothing 1000
